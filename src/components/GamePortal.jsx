@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { signOut } from "firebase/auth";
 import { auth, db } from "../firebase";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, collection, addDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import UserProfile from "./UserProfile";
 import AdminDashboard from "./AdminDashboard";
 import Leaderboard from "./LeaderBoard";
@@ -47,20 +47,57 @@ export default function GamePortal({ user }) {
         }
     }, [user]);
 
+    const activeSessionRef = useRef(null);
+
     useEffect(() => {
-        const handleMessage = (event) => {
+        const handleMessage = async (event) => {
             if (event.data?.type === "firebase-auth-ack") {
-                console.log("Game acknowledgement successful");
                 authAcknowledged.current = true;
                 if (retryTimer.current) {
                     clearInterval(retryTimer.current);
                     retryTimer.current = null;
                 }
             }
+            if (event.data?.type === "game_start") {
+                try {
+                    const sessionDoc = await addDoc(collection(db, "telemetry_sessions"), {
+                        userId: user.uid,
+                        userEmail: user.email || "",
+                        userName: user.displayName || user.email || "Player",
+                        startTime: serverTimestamp(),
+                        status: "playing"
+                    });
+                    activeSessionRef.current = sessionDoc.id;
+                } catch (err) {
+                }
+            }
+            if (event.data?.type === "game_end") {
+                if (activeSessionRef.current) {
+                    try {
+                        await updateDoc(doc(db, "telemetry_sessions", activeSessionRef.current), {
+                            endTime: serverTimestamp(),
+                            score: event.data.score || 0,
+                            pipesPassed: event.data.pipesPassed || 0,
+                            status: "completed"
+                        });
+                        activeSessionRef.current = null;
+                        
+                        const currentHigh = userData?.highscore || 0;
+                        const newScore = event.data.score || 0;
+                        const currentGamesPlayed = userData?.gamesPlayed || 0;
+                        
+                        await updateDoc(doc(db, "users", user.uid), {
+                            gamesPlayed: currentGamesPlayed + 1,
+                            ...(newScore > currentHigh ? { highscore: newScore } : {})
+                        });
+                    } catch (err) {
+                    }
+                }
+            }
         };
         window.addEventListener("message", handleMessage);
         return () => window.removeEventListener("message", handleMessage);
-    }, []);
+    }, [user, userData]);
 
     const handleGameLoaded = useCallback(() => {
         setGameLoaded(true);

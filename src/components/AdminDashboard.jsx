@@ -1,37 +1,51 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs, query, limit, orderBy } from "firebase/firestore";
+import { collection, query, limit, orderBy, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, LineChart, Line } from "recharts";
 
 export default function AdminDashboard({ userData }) {
     const [usersStats, setUsersStats] = useState([]);
+    const [telemetryStats, setTelemetryStats] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const fetchStats = async () => {
-            try {
-                const q = query(collection(db, "users"), orderBy('highscore', "desc"), limit(10));
-                const snapshot = await getDocs(q);
-                let data = [];
-                snapshot.forEach(doc => {
-                    const u = doc.data();
-                    data.push({
-                        name: u.displayName || u.email || "Player",
-                        gamesPlayed: u.gamesPlayed || 0,
-                        highscore: u.highscore || 0
-                    });
-                });
-                setUsersStats(data);
-                setLoading(false);
-            } catch (err) {
-                console.error("Failed to fetch admin stats", err);
-                setLoading(false);
-            }
-        };
+        if (userData?.role !== 'admin') return;
 
-        if (userData?.role === 'admin') {
-            fetchStats();
-        }
+        const qUsers = query(collection(db, "users"), orderBy('highscore', "desc"), limit(10));
+        const unsubUsers = onSnapshot(qUsers, (snapshot) => {
+            let data = [];
+            snapshot.forEach(doc => {
+                const u = doc.data();
+                data.push({
+                    name: u.displayName || u.email || "Player",
+                    gamesPlayed: u.gamesPlayed || 0,
+                    highscore: u.highscore || 0
+                });
+            });
+            setUsersStats(data);
+            setLoading(false);
+        });
+
+        const qTelemetry = query(collection(db, "telemetry_sessions"), orderBy('startTime', "desc"), limit(20));
+        const unsubTelemetry = onSnapshot(qTelemetry, (snapshot) => {
+            let data = [];
+            snapshot.forEach(doc => {
+                const t = doc.data();
+                if (t.status === 'completed') {
+                    data.push({
+                        name: t.userName || "Player",
+                        score: t.score || 0,
+                        pipesPassed: t.pipesPassed || 0
+                    });
+                }
+            });
+            setTelemetryStats(data.reverse());
+        });
+
+        return () => {
+            unsubUsers();
+            unsubTelemetry();
+        };
     }, [userData]);
 
     if (userData?.role !== 'admin') {
@@ -87,6 +101,19 @@ export default function AdminDashboard({ userData }) {
                         <Tooltip wrapperStyle={{ backgroundColor: "#333", color: "#fff" }} />
                         <Legend />
                     </PieChart>
+                </div>
+
+                <div style={{ backgroundColor: "#1e1e1e", padding: "20px", borderRadius: "8px" }}>
+                    <h3 style={{ textAlign: "center", marginBottom: "20px" }}>Recent Telemetry (Pipes Passed)</h3>
+                    <LineChart width={600} height={300} data={telemetryStats}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                        <XAxis dataKey="name" stroke="#ccc" />
+                        <YAxis stroke="#ccc" />
+                        <Tooltip wrapperStyle={{ backgroundColor: "#333", color: "#fff" }} />
+                        <Legend />
+                        <Line type="monotone" dataKey="pipesPassed" stroke="#ff7300" name="Pipes Passed" />
+                        <Line type="monotone" dataKey="score" stroke="#387908" name="Score" />
+                    </LineChart>
                 </div>
 
             </div>
